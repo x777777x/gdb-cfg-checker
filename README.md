@@ -222,7 +222,7 @@ python3 -m unittest tests.test_tool -v
 
 ## 依赖
 
-- Python 3.9+
+- Python 3.6+
 - PyMySQL（`pip3 install PyMySQL`）
 
 ## 注意事项

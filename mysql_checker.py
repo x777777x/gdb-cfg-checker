@@ -685,35 +685,40 @@ def check_best_practices(
         return v if v is not None else None
 
     # --- Replication & durability ---
-    if (v := get("innodb_flush_log_at_trx_commit")) is not None:
+    v = get("innodb_flush_log_at_trx_commit")
+    if v is not None:
         if str(v).strip() != "1":
             findings.append((
                 "WARN", "innodb_flush_log_at_trx_commit",
                 f"建议为 1 以保证事务持久性（崩溃不丢已提交事务），当前 = {v}",
             ))
 
-    if (v := get("sync_binlog")) is not None:
+    v = get("sync_binlog")
+    if v is not None:
         if str(v).strip() == "0":
             findings.append((
                 "WARN", "sync_binlog",
                 "建议非 0（如 1）以避免主机崩溃丢失 binlog 事件，当前 = 0",
             ))
 
-    if (v := get("binlog_format")) is not None:
+    v = get("binlog_format")
+    if v is not None:
         if str(v).strip().upper() not in ("ROW",):
             findings.append((
                 "WARN", "binlog_format",
                 f"复制场景建议 ROW（最安全），当前 = {v}",
             ))
 
-    if (v := get("log_bin")) is not None:
+    v = get("log_bin")
+    if v is not None:
         if not _is_on(v):
             findings.append((
                 "INFO", "log_bin",
                 "未开启 binlog，无法做时间点恢复与复制",
             ))
 
-    if (v := get("gtid_mode")) is not None:
+    v = get("gtid_mode")
+    if v is not None:
         if str(v).strip().upper() in ("OFF", "OFF_PERMISSIVE"):
             findings.append((
                 "INFO", "gtid_mode",
@@ -721,28 +726,32 @@ def check_best_practices(
             ))
 
     # --- Security / hardening ---
-    if (v := get("skip_name_resolve")) is not None:
+    v = get("skip_name_resolve")
+    if v is not None:
         if not _is_on(v):
             findings.append((
                 "WARN", "skip_name_resolve",
                 "建议开启以禁用主机名解析（避免 DNS 抖动与连接卡住），当前关闭",
             ))
 
-    if (v := get("local_infile")) is not None:
+    v = get("local_infile")
+    if v is not None:
         if _is_on(v):
             findings.append((
                 "WARN", "local_infile",
                 "建议关闭以禁止 LOAD DATA LOCAL INFILE（攻击面），当前开启",
             ))
 
-    if (v := get("secure_file_priv")) is not None:
+    v = get("secure_file_priv")
+    if v is not None:
         if str(v).strip() == "":
             findings.append((
                 "INFO", "secure_file_priv",
                 "secure_file_priv 为空，LOAD_FILE/导出不受限路径约束",
             ))
 
-    if (v := get("sql_mode")) is not None:
+    v = get("sql_mode")
+    if v is not None:
         s = str(v).strip()
         if s == "" or "NO_ENGINE_SUBSTITUTION" not in s.upper():
             # only a soft hint
@@ -752,14 +761,16 @@ def check_best_practices(
             ))
 
     # --- Capacity sanity ---
-    if (v := get("max_connections")) is not None:
+    v = get("max_connections")
+    if v is not None:
         if not _is_int_in(50, 100000)(v):
             findings.append((
                 "WARN", "max_connections",
                 f"max_connections={v} 异常（建议 50~10000 区间复核）",
             ))
 
-    if (v := get("innodb_buffer_pool_size")) is not None:
+    v = get("innodb_buffer_pool_size")
+    if v is not None:
         # Just report the value in human form; can't know RAM here, so INFO.
         try:
             bytes_val = int(normalize_numeric(str(v)))
@@ -774,7 +785,8 @@ def check_best_practices(
                 f"innodb_buffer_pool_size={v}（无法解析为字节数）",
             ))
 
-    if (v := get("max_connect_errors")) is not None:
+    v = get("max_connect_errors")
+    if v is not None:
         try:
             if int(str(v).strip()) < 100:
                 findings.append((

@@ -1,0 +1,4 @@
+因为密码不能直接使用参数输入，是否可以指定一个password-conf，从文件里获取，文件里面的格式为：
+[mysql]
+password=
+username=

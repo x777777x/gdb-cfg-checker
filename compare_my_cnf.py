@@ -103,8 +103,8 @@ DEFAULT_CONFIG_NAMES = ("my.cnf", "mysqld.cnf", "mysql.cnf")
 def find_my_cnf_files(
     base_dir: str,
     config_path_pattern: typing.Optional[str] = None,
-    config_names: tuple[str, ...] = DEFAULT_CONFIG_NAMES,
-) -> list[Path]:
+    config_names: typing.Tuple[str, ...] = DEFAULT_CONFIG_NAMES,
+) -> typing.List[Path]:
     """
     Recursively find all MySQL config files matching the expected layout.
 
@@ -167,7 +167,7 @@ def _strip_inline_comment(line: str) -> str:
     return line
 
 
-def _is_directive_line(line: str) -> typing.Optional[tuple[str, str]]:
+def _is_directive_line(line: str) -> typing.Optional[typing.Tuple[str, str]]:
     """
     Detect a my.cnf preprocessor directive: !include or !includedir.
     Returns (directive, argument) or None.
@@ -273,7 +273,7 @@ def _apply_include(
     name: str,
     target: Path,
     sections: "OrderedDict[str, OrderedDict[str, str]]",
-    duplicates: list[str],
+    duplicates: typing.List[str],
     source_label: str,
     seen: set,
 ) -> None:
@@ -314,7 +314,7 @@ def _apply_include(
 def _merge_sections(
     dst: "OrderedDict[str, OrderedDict[str, str]]",
     src: "OrderedDict[str, OrderedDict[str, str]]",
-    duplicates: list[str],
+    duplicates: typing.List[str],
 ) -> None:
     """Merge src sections into dst; later values override earlier ones."""
     for section, kvs in src.items():
@@ -338,7 +338,7 @@ def compare_two(
     sections_a: "OrderedDict",
     sections_b: "OrderedDict",
     section_filter: typing.Optional[str] = None,
-) -> list[str]:
+) -> typing.List[str]:
     """
     Return a list of difference strings between two parsed configs.
 
@@ -382,7 +382,7 @@ def compare_two(
 # ---------------------------------------------------------------------------
 
 def print_diff_report(
-    files: list[Path],
+    files: typing.List[Path],
     section_filter: typing.Optional[str] = None,
     diff_only: bool = False,
     output_json: bool = False,
@@ -546,7 +546,7 @@ def _connect_one(
     socket_path: typing.Optional[str],
     ssl: typing.Optional[dict],
     connect_retries: int,
-) -> tuple[str, "OrderedDict", "dict[str, str]", typing.Optional[str]]:
+) -> typing.Tuple[str, "OrderedDict", "dict[str, str]", typing.Optional[str]]:
     """
     Worker for (optionally parallel) connection.
 
@@ -571,7 +571,7 @@ def _connect_one(
     return ip, mysqld_params, running_vars, error
 
 
-def _allow_diff_set(allow_diff_keys: list[str]) -> set[str]:
+def _allow_diff_set(allow_diff_keys: typing.List[str]) -> typing.Set[str]:
     """Build the normalized set of keys exempt from discrepancy reporting.
 
     Keys are dash-normalized to underscore form to match the keys emitted by
@@ -583,9 +583,9 @@ def _allow_diff_set(allow_diff_keys: list[str]) -> set[str]:
 
 
 def _filter_allowed_diffs(
-    discrepancies: list[str],
-    allow_set: set[str],
-) -> list[str]:
+    discrepancies: typing.List[str],
+    allow_set: typing.Set[str],
+) -> typing.List[str]:
     """Drop discrepancies whose config key is in the --allow-diff set.
 
     Discrepancy strings emitted by compare_file_vs_running look like
@@ -598,12 +598,12 @@ def _filter_allowed_diffs(
 
 
 def run_running_vs_file_comparison(
-    files: list[Path],
+    files: typing.List[Path],
     mysql_port: int,
     mysql_user: typing.Optional[str],
     mysql_password: typing.Optional[str],
     socket_path: typing.Optional[str],
-    allow_diff_keys: list[str],
+    allow_diff_keys: typing.List[str],
     workers: int = 1,
     ssl: typing.Optional[dict] = None,
     connect_retries: int = 0,
@@ -733,7 +733,7 @@ def run_single_host_comparison(
     mysql_user: typing.Optional[str],
     mysql_password: typing.Optional[str],
     socket_path: typing.Optional[str],
-    allow_diff_keys: list[str],
+    allow_diff_keys: typing.List[str],
     ssl: typing.Optional[dict] = None,
     connect_retries: int = 0,
     do_best_practice: bool = False,
@@ -753,7 +753,7 @@ def run_single_host_comparison(
     allow_set = _allow_diff_set(allow_diff_keys)
 
     def _result(
-        connection_errors: list[dict],
+        connection_errors: typing.List[dict],
         discrepancies: dict,
         best_practices: dict,
         total: int,
