@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import typing
+import unicodedata
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -334,47 +335,95 @@ def _merge_sections(
 # Comparison (file vs file)
 # ---------------------------------------------------------------------------
 
-def compare_two(
-    sections_a: "OrderedDict",
-    sections_b: "OrderedDict",
+def build_cross_compare(
+    parsed: "dict",
+    ips: "list",
     section_filter: typing.Optional[str] = None,
-) -> typing.List[str]:
+) -> dict:
     """
-    Return a list of difference strings between two parsed configs.
+    Compare all hosts' parsed configs at once (横向对比).
 
-    Values are normalized by parameter type before comparison, so 1G and
+    For each (section, key) appearing in any host:
+      - If every host defines it with the same normalized value -> identical,
+        counted and skipped (not reported).
+      - Otherwise -> a 'differing' entry: hosts grouped by normalized value
+        (each group: first-seen raw value, count, member ips), plus
+        missing_hosts for hosts that don't define the key.
+
+    Normalization is by parameter type (via normalize_value), so 1G and
     1073741824, ON and on, log-bin and log_bin are recognized as equal.
-    When `section_filter` is set, only that section is compared.
+
+    Returns:
+        {"identical_count", "differing_count", "differing": [...]}
     """
-    differences: list[str] = []
+    # Collect every (section, key) across hosts (respecting section_filter).
+    section_keys: "dict" = {}
+    for ip in ips:
+        for sec, kvs in parsed[ip].items():
+            if section_filter and sec != section_filter:
+                continue
+            section_keys.setdefault(sec, set()).update(kvs.keys())
 
-    if section_filter:
-        sections = {section_filter}
-    else:
-        sections = set(sections_a.keys()) | set(sections_b.keys())
+    identical = 0
+    differing: "list" = []
 
-    for section in sorted(sections):
-        sv_a = sections_a.get(section, OrderedDict())
-        sv_b = sections_b.get(section, OrderedDict())
-        all_keys = set(sv_a.keys()) | set(sv_b.keys())
+    for sec in sorted(section_keys):
+        for key in sorted(section_keys[sec]):
+            # Per-host raw value, or None if undefined.
+            raws = [(ip, parsed[ip].get(sec, OrderedDict()).get(key))
+                    for ip in ips]
+            defined = [(ip, v) for ip, v in raws if v is not None]
+            if not defined:
+                continue
+            norm_set = {normalize_value(key, v) for _, v in defined}
+            if len(norm_set) == 1 and len(defined) == len(ips):
+                identical += 1
+                continue
 
-        for key in sorted(all_keys):
-            va = sv_a.get(key)
-            vb = sv_b.get(key)
-
-            if va is not None and vb is not None:
-                if normalize_value(key, va) == normalize_value(key, vb):
+            # Differing: group defined hosts by normalized value.
+            groups_map: "dict" = {}  # normalized -> {value, hosts}
+            missing_hosts: "list" = []
+            for ip, raw in raws:
+                if raw is None:
+                    missing_hosts.append(ip)
                     continue
+                nv = normalize_value(key, raw)
+                bucket = groups_map.setdefault(
+                    nv, {"value": raw, "hosts": []})
+                bucket["hosts"].append(ip)
 
-            prefix = f"[{section}] {key}"
-            if va is None:
-                differences.append(f"  + {prefix} = {vb}  (仅存在)")
-            elif vb is None:
-                differences.append(f"  - {prefix} = {va}  (仅存在)")
-            else:
-                differences.append(f"  ~ {prefix}: {va} -> {vb}")
+            groups = [
+                {"value": g["value"], "normalized": nv,
+                 "count": len(g["hosts"]), "hosts": g["hosts"]}
+                for nv, g in groups_map.items()
+            ]
+            # Majority first (count desc), then by normalized value.
+            groups.sort(key=lambda x: (-x["count"], x["normalized"]))
+            differing.append({
+                "section": sec,
+                "key": key,
+                "groups": groups,
+                "missing_hosts": sorted(missing_hosts),
+            })
 
-    return differences
+    return {
+        "identical_count": identical,
+        "differing_count": len(differing),
+        "differing": differing,
+    }
+
+
+def _disp_width(s: str) -> int:
+    """Approximate display width: CJK/fullwidth chars count as 2 columns."""
+    w = 0
+    for ch in s:
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1
+    return w
+
+
+def _pad(s: str, width: int) -> str:
+    """Left-justify s to `width` display columns (CJK-aware)."""
+    return s + " " * max(0, width - _disp_width(s))
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +433,12 @@ def compare_two(
 def print_diff_report(
     files: typing.List[Path],
     section_filter: typing.Optional[str] = None,
-    diff_only: bool = False,
     output_json: bool = False,
 ) -> dict:
-    """Main file-vs-file comparison logic. Returns a structured result dict."""
-    parsed: dict[str, "OrderedDict"] = {}
-    all_duplicates: dict[str, list[str]] = {}
-    ips: list[str] = []
+    """Compare all config files at once (横向对比). Returns a structured result dict."""
+    parsed: "dict" = {}
+    all_duplicates: "dict" = {}
+    ips: "list" = []
     for f in files:
         ip = extract_ip(f)
         ips.append(ip)
@@ -399,16 +447,7 @@ def print_diff_report(
         parsed[ip] = secs
         all_duplicates[ip] = dupes
 
-    # Pairwise diff
-    all_differences: dict[tuple[str, str], list[str]] = {}
-    for i in range(len(ips)):
-        for j in range(i + 1, len(ips)):
-            ip_a, ip_b = ips[i], ips[j]
-            diffs = compare_two(parsed[ip_a], parsed[ip_b], section_filter)
-            if diffs:
-                all_differences[(ip_a, ip_b)] = diffs
-
-    total_diffs = sum(len(v) for v in all_differences.values())
+    cross = build_cross_compare(parsed, ips, section_filter)
 
     result = {
         "mode": "file",
@@ -416,11 +455,7 @@ def print_diff_report(
         "host_count": len(files),
         "hosts": {ip: sum(len(v) for v in parsed[ip].values()) for ip in ips},
         "duplicates": {ip: all_duplicates[ip] for ip in ips if all_duplicates[ip]},
-        "diff_pairs": [
-            {"pair": list(k), "count": len(v), "diffs": v}
-            for k, v in all_differences.items()
-        ],
-        "total_diffs": total_diffs,
+        "cross_compare": cross,
     }
 
     if output_json:
@@ -429,7 +464,7 @@ def print_diff_report(
 
     # ---- Human-readable report ----
     print("=" * 72)
-    print("  my.cnf 配置文件差异比对报告")
+    print("  my.cnf 配置文件横向对比报告")
     print(f"  目录: {result['directory']}")
     print(f"  主机数: {len(files)}")
     if section_filter:
@@ -455,79 +490,40 @@ def print_diff_report(
                 print(f"    ⚠  {w}")
         print()
 
-    if not all_differences:
-        print("所有配置文件完全一致，无差异。")
+    # ---- 横向差异（相同参数已忽略）----
+    differing = cross["differing"]
+    print("=" * 72)
+    print("  横向差异（相同参数已忽略）")
+    print(f"  相同参数 {cross['identical_count']} 个（已忽略），"
+          f"差异/缺失参数 {cross['differing_count']} 个")
+    print("=" * 72)
+
+    if not differing:
+        print("  所有参数在所有主机上完全一致。")
+        print("\n--- 对比完成 ---")
         return result
 
-    print("--- 差异统计 ---")
-    print(f"  共 {total_diffs} 处差异 (涉及 {len(all_differences)} 对主机)")
-    print()
+    current_section = None
+    for entry in differing:
+        sec = entry["section"]
+        if sec != current_section:
+            current_section = sec
+            print(f"\n  [{sec}]")
+        print(f"    {entry['key']}")
 
-    for (ip_a, ip_b), diffs in all_differences.items():
-        if diff_only and not diffs:
-            continue
-        print("=" * 72)
-        print(f"  比对: {ip_a}  vs  {ip_b}")
-        print(f"  差异数: {len(diffs)}")
-        print("=" * 72)
+        # Per-key column width so the ×N counts line up (CJK-aware).
+        val_strs = [str(g["value"]) for g in entry["groups"]]
+        if entry["missing_hosts"]:
+            val_strs.append("(缺失)")
+        width = max(_disp_width(s) for s in val_strs)
 
-        # Group consecutive diff lines by section. compare_two emits lines
-        # sorted by (section, key), so equal sections are contiguous.
-        current_section = None
-        for line in diffs:
-            sec_match = re.match(r"  [\+\-~] \[([^\]]+)\]", line)
-            if sec_match:
-                sec = sec_match.group(1)
-                if sec != current_section:
-                    current_section = sec
-                    print(f"\n  [{current_section}]")
-            print(f"    {line.strip()}")
-        print()
-
-    # ---- Global parameter parity summary ----
-    print("=" * 72)
-    print("  全局参数差异汇总 (跨所有主机)")
-    print("=" * 72)
-
-    all_section_keys: dict[str, dict[str, str]] = {}
-    for ip in ips:
-        for sec, kvs in parsed[ip].items():
-            if section_filter and sec != section_filter:
-                continue
-            all_section_keys.setdefault(sec, {}).update(kvs)
-
-    summary_lines: list[str] = []
-    for sec in sorted(all_section_keys):
-        kvs = all_section_keys[sec]
-        sec_parities: dict[str, str] = {}
-        for ip in ips:
-            ip_sec = parsed[ip].get(sec, OrderedDict())
-            for k, v in kvs.items():
-                ip_val = ip_sec.get(k)
-                if ip_val is not None:
-                    sec_parities[k] = sec_parities.get(k, "") + f"{ip}={ip_val}; "
-
-        # A key "differs" if its normalized form is not identical across all
-        # hosts that define it, or if it is not defined on every host.
-        diffs_in_sec: list[str] = []
-        for k in kvs:
-            vals = [parsed[ip].get(sec, OrderedDict()).get(k) for ip in ips]
-            defined = [v for v in vals if v is not None]
-            if not defined:
-                continue
-            norm_set = {normalize_value(k, v) for v in defined}
-            if len(norm_set) > 1 or len(defined) != len(ips):
-                diffs_in_sec.append(k)
-
-        if diffs_in_sec:
-            summary_lines.append(f"  [{sec}]")
-            for k in sorted(diffs_in_sec):
-                summary_lines.append(f"    {k}: {sec_parities.get(k, '')}")
-
-    if summary_lines:
-        print("\n".join(summary_lines))
-    else:
-        print("  所有参数在所有主机上完全一致。")
+        for g in entry["groups"]:
+            members = ", ".join(g["hosts"])
+            print(f"        {_pad(str(g['value']), width)}  ×{g['count']}  {members}")
+        if entry["missing_hosts"]:
+            missing = ", ".join(entry["missing_hosts"])
+            print(f"        {_pad('(缺失)', width)}  "
+                  f"×{len(entry['missing_hosts'])}  {missing}")
 
     print()
     print("--- 对比完成 ---")
@@ -904,8 +900,6 @@ def main() -> int:
                              "file-vs-running(目录扫描，从路径提取 IP 连各实例) / "
                              "file-vs-running-host(单个文件 vs 显式指定的单个实例)")
     parser.add_argument("--section", help="只对比指定 section（如 mysqld）")
-    parser.add_argument("--diff-only", action="store_true",
-                        help="只显示有差异的主机对")
     parser.add_argument("--config-path", help="配置文件路径模板（含 {ip} 占位符）")
     parser.add_argument("--config-name", action="append", default=None,
                         help="要匹配的配置文件名（可重复，默认 my.cnf/mysqld.cnf）")
@@ -1039,7 +1033,6 @@ def main() -> int:
     print_diff_report(
         files,
         section_filter=args.section,
-        diff_only=args.diff_only,
         output_json=args.json,
     )
 

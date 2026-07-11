@@ -1,6 +1,6 @@
 # MySQL 配置巡检工具（gdb_cfg_checker）
 
-检查 MySQL 数据库运行配置与配置文件配置的工具。支持多主机 `my.cnf` 两两差异对比、文件配置与运行参数对比（按路径提取 IP 或显式指定 host），并附带最佳实践/加固巡检。
+检查 MySQL 数据库运行配置与配置文件配置的工具。支持多主机 `my.cnf` 横向对比、文件配置与运行参数对比（按路径提取 IP 或显式指定 host），并附带最佳实践/加固巡检。
 
 ## 功能特性
 
@@ -8,15 +8,17 @@
 >
 > | 模式 | 目标 host 来源 | 配置来源 | 典型场景 |
 > |------|---------------|----------|----------|
-> | `file` | 不连接 DB | 目录扫描，多文件两两对比 | 多主机配置一致性巡检 |
+> | `file` | 不连接 DB | 目录扫描，多文件横向对比 | 多主机配置一致性巡检 |
 > | `file-vs-running` | 从文件路径提取 IP | 目录扫描 | 多主机文件 vs 运行参数 |
 > | `file-vs-running-host` | 显式 `--mysql-host` | 单个 `--config-file` | 单实例 / 路径不含 IP（如本地） |
 
-### 1. 配置文件差异对比（file 模式）
-- 自动递归扫描多个主机的 `my.cnf`（或自定义文件名）配置文件
+### 1. 配置文件横向对比（file 模式）
+- 自动递归扫描多个主机的 `my.cnf`（或自定义文件名）配置文件，所有主机**一次性横向对比**
+- 相同的配置项（全主机同值）**忽略不显示**，只聚焦差异
+- 差异项按值分组：多数值排前，以 `值 ×个数: 主机列表` 直观呈现"几个相同/相同值是多少/哪些不同"
+- 部分主机未定义的配置项单列 `(缺失) ×个数: 主机`
 - 检测同一文件内的重复 key 并警告（含 `!include` 合并产生的重复）
 - 支持按 section 过滤对比（`--section`）
-- 支持只显示有差异的主机对（`--diff-only`）
 - 比较前对值做类型归一化，消除 `1G` vs `1073741824`、`ON` vs `on` 的假阳性
 
 ### 2. 文件配置 vs 运行参数对比（file-vs-running 模式）
@@ -30,7 +32,7 @@
 - 用 `--config-file` 指定**单个**配置文件，`--mysql-host` / `--mysql-port` 显式指定目标实例
 - 不依赖路径提取 IP，适合本地实例或路径不含 IP 的场景（如 `./my.cnf` 对 `127.0.0.1`）
 - 复用与 `file-vs-running` 相同的归一化、对比、加固巡检逻辑
-- 只对比这一个文件 vs 这一个实例，**不做**多主机两两对比
+- 只对比这一个文件 vs 这一个实例，**不涉及多主机横向对比**
 - 同样支持 `--best-practice` / `--allow-diff` / `--json` / `--strict`
 
 ### 4. my.cnf 解析增强
@@ -85,14 +87,20 @@ pip3 install -r requirements.txt   # 安装 PyMySQL
 ### 基本用法
 
 ```bash
-# 配置文件两两对比
+# 所有主机横向对比（相同项忽略，差异按值分组）
 python3 compare_my_cnf.py <base_directory> --mode file
 
 # 按 section 过滤
 python3 compare_my_cnf.py <base_directory> --section mysqld
+```
 
-# 只显示有差异的主机对
-python3 compare_my_cnf.py <base_directory> --diff-only
+横向差异输出示例（相同项已忽略）：
+
+```
+[mysqld] max_connections
+    200      ×3  10.0.0.1, 10.0.0.2, 10.0.0.3
+    300      ×1  10.0.0.4
+    (缺失)   ×1  10.0.0.5
 ```
 
 ### 文件 vs 运行参数
@@ -158,7 +166,6 @@ python3 compare_my_cnf.py <base_directory> \
 | `<base_directory>` | 配置文件基础目录（`file`/`file-vs-running` 必填；`file-vs-running-host` 不用） | — |
 | `--mode` | 对比模式：`file` / `file-vs-running` / `file-vs-running-host` | `file` |
 | `--section` | 只对比指定 section | 全部 |
-| `--diff-only` | 只显示有差异的主机对 | 关 |
 | `--config-path` | 路径模板（含 `{ip}` 占位符） | 递归搜索 |
 | `--config-name` | 要匹配的文件名（可重复） | `my.cnf` 等 |
 | `--config-file` | 单个配置文件路径（仅 `file-vs-running-host` 必填） | - |
@@ -186,7 +193,7 @@ python3 compare_my_cnf.py <base_directory> \
 ## 输出符号
 
 - `✓` 一致　`⚠` 差异　`✗` 连接失败
-- `~` 值不同　`+` 仅一侧存在　`-` 仅一侧缺失
+- 横向对比：`值 ×个数` 为按值分组计数，`(缺失)` 表示该主机未定义此配置项
 
 ## 最佳实践巡检项（`--best-practice`）
 

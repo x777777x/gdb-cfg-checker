@@ -199,45 +199,82 @@ class TestInclude(unittest.TestCase):
             self.assertTrue(any("环路" in d for d in dups))
 
 
-class TestCompareTwo(unittest.TestCase):
+class TestCrossCompare(unittest.TestCase):
+    """build_cross_compare: all hosts at once, identical ignored, differing grouped."""
 
-    def _sec(self, **kw):
-        d = OrderedDict()
-        d["mysqld"] = OrderedDict(kw)
+    def _parsed(self, per_ip):
+        # per_ip: {ip: {section: {key: value}}}
+        d = {}
+        for ip, secs in per_ip.items():
+            od = OrderedDict()
+            for sec, kvs in secs.items():
+                od[sec] = OrderedDict(kvs)
+            d[ip] = od
         return d
 
-    def test_equivalent_values_no_diff(self):
-        a = self._sec(**{"innodb_buffer_pool_size": "1G",
-                         "log_bin": "ON", "binlog_format": "row"})
-        b = self._sec(**{"innodb_buffer_pool_size": "1073741824",
-                         "log_bin": "on", "binlog_format": "ROW"})
-        self.assertEqual(cmp.compare_two(a, b), [])
+    def test_all_identical_ignored(self):
+        parsed = self._parsed({
+            "10.0.0.1": {"mysqld": {"max_connections": "200", "log_bin": "ON"}},
+            "10.0.0.2": {"mysqld": {"max_connections": "200", "log_bin": "ON"}},
+        })
+        r = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(r["differing"], [])
+        self.assertEqual(r["differing_count"], 0)
+        self.assertEqual(r["identical_count"], 2)
 
-    def test_real_diff_detected(self):
-        a = self._sec(max_connections="200")
-        b = self._sec(max_connections="300")
-        diffs = cmp.compare_two(a, b)
-        self.assertEqual(len(diffs), 1)
-        self.assertIn("max_connections", diffs[0])
+    def test_diff_grouped_by_value_majority_first(self):
+        parsed = self._parsed({
+            "10.0.0.1": {"mysqld": {"max_connections": "200"}},
+            "10.0.0.2": {"mysqld": {"max_connections": "200"}},
+            "10.0.0.3": {"mysqld": {"max_connections": "300"}},
+        })
+        r = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2", "10.0.0.3"])
+        self.assertEqual(r["differing_count"], 1)
+        entry = r["differing"][0]
+        self.assertEqual(entry["key"], "max_connections")
+        # majority (count 2) first, then the outlier
+        self.assertEqual(entry["groups"][0]["count"], 2)
+        self.assertEqual(entry["groups"][0]["value"], "200")
+        self.assertEqual(entry["groups"][1]["count"], 1)
+        self.assertEqual(entry["groups"][1]["value"], "300")
+        self.assertEqual(entry["missing_hosts"], [])
 
-    def test_only_in_one_side(self):
-        a = self._sec(max_connections="200", port="3306")
-        b = self._sec(max_connections="200")
-        diffs = cmp.compare_two(a, b)
-        self.assertEqual(len(diffs), 1)
-        self.assertIn("(仅存在)", diffs[0])
+    def test_normalization_merges_equivalent(self):
+        parsed = self._parsed({
+            "10.0.0.1": {"mysqld": {"innodb_buffer_pool_size": "1G",
+                                    "log_bin": "ON"}},
+            "10.0.0.2": {"mysqld": {"innodb_buffer_pool_size": "1073741824",
+                                    "log_bin": "on"}},
+        })
+        r = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2"])
+        # 1G==1073741824, ON==on -> identical, not differing
+        self.assertEqual(r["differing"], [])
+        self.assertEqual(r["identical_count"], 2)
+
+    def test_missing_hosts_reported(self):
+        parsed = self._parsed({
+            "10.0.0.1": {"mysqld": {"server_id": "1", "relay_log": "on"}},
+            "10.0.0.2": {"mysqld": {"server_id": "2"}},  # relay_log missing
+        })
+        r = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2"])
+        keys = {e["key"]: e for e in r["differing"]}
+        self.assertIn("server_id", keys)
+        self.assertIn("relay_log", keys)
+        self.assertEqual(keys["relay_log"]["missing_hosts"], ["10.0.0.2"])
+        self.assertEqual(keys["relay_log"]["groups"][0]["count"], 1)
 
     def test_section_filter(self):
-        a = OrderedDict()
-        a["client"] = OrderedDict([("port", "3307")])
-        a["mysqld"] = OrderedDict([("port", "3306")])
-        b = OrderedDict()
-        b["client"] = OrderedDict([("port", "3306")])
-        b["mysqld"] = OrderedDict([("port", "3306")])
-        # With filter, only mysqld compared -> identical -> no diff
-        self.assertEqual(cmp.compare_two(a, b, section_filter="mysqld"), [])
-        # Without filter, client differs
-        self.assertTrue(cmp.compare_two(a, b))
+        parsed = self._parsed({
+            "10.0.0.1": {"client": {"port": "3307"}, "mysqld": {"port": "3306"}},
+            "10.0.0.2": {"client": {"port": "3306"}, "mysqld": {"port": "3306"}},
+        })
+        # filter to mysqld -> client's differing port is ignored
+        r = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2"],
+                                    section_filter="mysqld")
+        self.assertEqual(r["differing"], [])
+        # without filter, client port differs
+        r_all = cmp.build_cross_compare(parsed, ["10.0.0.1", "10.0.0.2"])
+        self.assertGreaterEqual(r_all["differing_count"], 1)
 
 
 class TestCompareFileVsRunning(unittest.TestCase):
