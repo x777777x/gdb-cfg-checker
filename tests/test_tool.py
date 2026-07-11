@@ -355,14 +355,14 @@ class TestBestPractices(unittest.TestCase):
 class TestIpExtraction(unittest.TestCase):
 
     def test_extract_before_data(self):
-        p = Path("/data/goldendb/10.0.1.1/data/goldendb/nudb1/etc/my.cnf")
+        p = Path("/data/goldendb/10.0.1.1/data/goldendb/db1/etc/my.cnf")
         self.assertEqual(cmp.extract_ip(p), "10.0.1.1")
 
     def test_extract_when_base_path_contains_data(self):
         # Regression: when the base directory itself contains a 'data'
         # segment (real GoldenDB: /data/goldendb/<ip>/data/...), the first
         # 'data' must not be mistaken for the per-host marker.
-        p = Path("/data/goldendb/192.168.1.5/data/goldendb/nudb1/etc/my.cnf")
+        p = Path("/data/goldendb/192.168.1.5/data/goldendb/db1/etc/my.cnf")
         self.assertEqual(cmp.extract_ip(p), "192.168.1.5")
 
     def test_extract_ipv4_segment(self):

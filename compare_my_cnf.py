@@ -18,7 +18,7 @@ Usage:
 
     # Custom path pattern (with {ip} placeholder)
     python3 compare_my_cnf.py <base_directory> \\
-        --config-path "{ip}/data/goldendb/nudb1/etc/my.cnf"
+        --config-path "{ip}/data/goldendb/db1/etc/my.cnf"
 
     # Allow expected differences (e.g. server_id must differ per host)
     python3 compare_my_cnf.py <base_directory> --allow-diff "server_id,port"
