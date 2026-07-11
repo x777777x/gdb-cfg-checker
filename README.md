@@ -225,6 +225,13 @@ python3 -m unittest tests.test_tool -v
 - Python 3.6+
 - PyMySQL（`pip3 install PyMySQL`）
 
+> **Python 3.6 用户注意**：PyMySQL 1.0.3+ 要求 Python ≥3.7，3.6 能装的最高版本是 `1.0.2`；
+> 且 3.6 自带的 pip 较旧，直接 `pip install` 可能静默失败，需先升级 pip：
+> ```bash
+> python -m pip install --upgrade "pip==21.3.1"   # 最后一个支持 3.6 的 pip
+> python -m pip install "PyMySQL==1.0.2"
+> ```
+
 ## 注意事项
 
 1. **重复 key**：同一 section 内重复 key，保留最后一个值（与 MySQL 行为一致）并警告。
